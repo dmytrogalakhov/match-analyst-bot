@@ -67,7 +67,7 @@ producing the final analysis.
 ### Setup
 
 ```bash
-git clone [your-repo-url]
+git clone https://github.com/dmytrogalakhov/match-analyst-bot.git
 cd match-analyst-bot
 python3 -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
