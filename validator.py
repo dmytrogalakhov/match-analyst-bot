@@ -75,6 +75,10 @@ Return ONLY valid JSON with these fields:
 - "thanks" → reason: "conversational reply, not a query"
 - "Wimbledon 2030 final" → reason: "future event — hasn't happened yet"
 
+## LANGUAGE NOTE
+- The user may write in any language (English, Russian, Ukrainian, Spanish, etc.). 
+- Non-English queries are still VALID if they're about tennis. Do not reject a query just because it's in a language other than English.
+
 Return ONLY the JSON. No markdown, no explanation, no code fences."""
 
     response = llm.invoke(validation_prompt)

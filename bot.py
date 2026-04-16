@@ -10,17 +10,19 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
 
 from analyst import analyse_match
+from parser import parse_match_query, is_ambiguous
 
 load_dotenv()
 
@@ -63,7 +65,8 @@ def format_for_telegram(text: str) -> str:
       3. Escape HTML special chars.
       4. Bold the top header line (e.g. "Player A def. Player B 6-4 6-2").
       5. Bold known section labels like "THE STORY:" explicitly.
-      6. Tidy up extra blank lines.
+      6. Bold any ALL-CAPS label ending in colon (catches translated labels).
+      7. Tidy up extra blank lines.
     """
 
     # Step 1: Remove all asterisks. We'll rebuild formatting from known patterns.
@@ -105,12 +108,8 @@ def format_for_telegram(text: str) -> str:
 
     text = "\n".join(formatted_lines)
 
-    # Step 6: Bold section labels explicitly. These appear at the start of a line,
-    # usually followed by a colon. Matching after HTML-escaping is fine because
-    # the labels themselves have no special characters.
+    # Step 6: Bold known English section labels explicitly.
     for label in SECTION_LABELS:
-        # Match: start of line, label, optional colon, rest of line
-        # Replace with: <b>LABEL</b> + rest
         pattern = rf"^({re.escape(label)})(\s*:?)"
         text = re.sub(
             pattern,
@@ -119,7 +118,18 @@ def format_for_telegram(text: str) -> str:
             flags=re.MULTILINE,
         )
 
-    # Step 7: Collapse 3+ consecutive newlines into 2
+    # Step 7: Fallback — bold any ALL-CAPS line-start label ending in a colon.
+    # Catches translated section labels like "ІСТОРІЯ МАТЧУ:" in Ukrainian,
+    # "ИСТОРИЯ МАТЧА:" in Russian, "ЦИФРИ, ЩО МАЮТЬ ЗНАЧЕННЯ:" etc.
+    # Allows Latin, Cyrillic (including Ukrainian letters), spaces, and commas.
+    text = re.sub(
+        r"^([А-ЯЄІЇҐA-Z][А-ЯЄІЇҐA-Z\s,]{2,50})(:)",
+        r"<b>\1</b>\2",
+        text,
+        flags=re.MULTILINE,
+    )
+
+    # Step 8: Collapse 3+ consecutive newlines into 2
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     return text.strip()
@@ -147,7 +157,9 @@ def split_message(text: str, max_length: int = TELEGRAM_MAX_LENGTH) -> list[str]
     return chunks
 
 
-# --- Command handlers ---
+# =============================================================================
+# COMMAND HANDLERS
+# =============================================================================
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for /start."""
@@ -183,30 +195,51 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle any plain text message — runs the agent."""
-    user_input = update.message.text
-    user = update.effective_user
-    logger.info(f"Message from {user.username or user.id}: {user_input}")
+# =============================================================================
+# CORE: RUN AGENT AND REPLY
+# =============================================================================
 
-    thinking_msg = await update.message.reply_text(
-        "🎾 Analysing the match... this usually takes 15–30 seconds."
+async def run_agent_and_reply(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_input: str,
+) -> None:
+    """
+    Run the agent and send the result to the user.
+    
+    This is the shared function called by both:
+    - handle_message (when query is unambiguous → run immediately)
+    - handle_callback (after user taps a clarification button)
+    """
+    chat_id = update.effective_chat.id
+
+    thinking_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text="🎾 Analysing the match... this usually takes 15–30 seconds.",
     )
 
     try:
+        # Run the sync agent in a thread pool so the bot stays responsive
         response = await asyncio.to_thread(analyse_match, user_input, False)
+
+        # Format for Telegram HTML
         formatted = format_for_telegram(response)
+
+        # Split if too long
         chunks = split_message(formatted)
 
+        # Delete the "thinking..." message and send the real response
         await thinking_msg.delete()
 
         for chunk in chunks:
             try:
-                await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+                await context.bot.send_message(
+                    chat_id=chat_id, text=chunk, parse_mode=ParseMode.HTML
+                )
             except Exception as e:
                 logger.warning(f"HTML send failed: {e}. Falling back to plain text.")
                 plain = re.sub(r"<[^>]+>", "", chunk)
-                await update.message.reply_text(plain)
+                await context.bot.send_message(chat_id=chat_id, text=plain)
 
     except Exception as e:
         logger.error(f"Error handling message: {e}", exc_info=True)
@@ -214,10 +247,100 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await thinking_msg.delete()
         except Exception:
             pass
-        await update.message.reply_text(
-            "⚠️ Sorry, something went wrong. Please try again in a moment."
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ Sorry, something went wrong. Please try again in a moment.",
         )
 
+
+# =============================================================================
+# MESSAGE HANDLER (with clarification logic)
+# =============================================================================
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle any plain text message.
+    
+    Flow:
+    1. Quick-parse the query (one fast LLM call)
+    2. Check if ambiguous (e.g. "Roland Garros 2025 final" — men's or women's?)
+    3. If ambiguous → show buttons and wait for user to pick
+    4. If clear → run the agent directly
+    """
+    user_input = update.message.text
+    user = update.effective_user
+    logger.info(f"Message from {user.username or user.id}: {user_input}")
+
+    # Quick parse to check for ambiguity BEFORE the heavy agent call
+    parsed = parse_match_query(user_input)
+    ambiguous, ambiguity_type = is_ambiguous(parsed)
+
+    if ambiguous and ambiguity_type == "gender":
+        # Stash the original query so we can resume after the user picks
+        context.user_data["pending_query"] = user_input
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🎾 Men's", callback_data="gender:mens"),
+                InlineKeyboardButton("🎾 Women's", callback_data="gender:womens"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "Quick question — men's or women's final?",
+            reply_markup=reply_markup,
+        )
+        return  # Wait for button tap before running the agent
+
+    # No ambiguity — run the agent directly
+    await run_agent_and_reply(update, context, user_input)
+
+
+# =============================================================================
+# CALLBACK HANDLER (button taps)
+# =============================================================================
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle inline keyboard button taps (e.g. Men's / Women's clarification).
+    
+    Flow:
+    1. User tapped a button → we get the callback_data (e.g. "gender:mens")
+    2. Retrieve the original query from context.user_data
+    3. Enrich the query with the user's choice
+    4. Run the agent with the enriched query
+    """
+    query = update.callback_query
+    await query.answer()  # Acknowledge the tap so Telegram stops showing a spinner
+
+    data = query.data  # e.g. "gender:mens"
+
+    if data.startswith("gender:"):
+        gender_choice = data.split(":")[1]  # "mens" or "womens"
+        pending = context.user_data.get("pending_query")
+
+        if not pending:
+            await query.edit_message_text(
+                "Sorry, I lost track of your original question. Please send it again."
+            )
+            return
+
+        # Enrich the query with the gender and clear pending state
+        gender_word = "men's" if gender_choice == "mens" else "women's"
+        enriched_input = f"{pending} ({gender_word} final)"
+        context.user_data.pop("pending_query", None)
+
+        # Edit the button message to show what they picked (nicer UX)
+        await query.edit_message_text(f"Got it — analysing the {gender_word} final...")
+
+        # Now run the full agent pipeline with the enriched query
+        await run_agent_and_reply(update, context, enriched_input)
+
+
+# =============================================================================
+# UNKNOWN COMMAND HANDLER
+# =============================================================================
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Unknown command."""
@@ -226,15 +349,20 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
 
-# --- Main ---
+# =============================================================================
+# MAIN
+# =============================================================================
+
 def main() -> None:
     """Start the bot."""
     logger.info("Starting Tennis Match Analyst Bot...")
 
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+    # Register handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 

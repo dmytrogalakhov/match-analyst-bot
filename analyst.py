@@ -58,6 +58,14 @@ If the user's query specifies a year, the match you analyse MUST be from that ex
   respond honestly: "I couldn't find reliable information about the [Tournament] 
   [Year] final. The search returned data about the [wrong year] edition instead. 
   Could you provide the players or the score, and I'll analyse from there?"
+- If the user mentions a specific player but that player did not play in the 
+  specified round, DO NOT silently analyse a different match. Instead:
+  1. Tell the user that [Player] did not play in [Round] at [Tournament] [Year]
+  2. Tell them who actually played in that round
+  3. If you can find what round [Player] reached, mention that 
+     (e.g. "Swiatek lost in the semifinals to Gauff")
+  4. Ask if they'd like you to analyse the actual final, or the player's 
+     last match at that tournament
 
 DO NOT confabulate. DO NOT analyse the wrong year "because it's the closest match".
 Honest failure is better than a wrong answer.
@@ -115,17 +123,35 @@ Structure:
   (don't analyse both unless explicitly asked).
 
 ## OUTPUT FORMAT RULES (VERY IMPORTANT)
-- Your final response to the user is ONLY the analysis itself, starting 
-  directly with the "## [Player A] def. [Player B]" header.
-- Do NOT include any preamble like "Now I have the data..." or 
-  "Let me verify..." or "Based on my searches..."
-- Do NOT include any meta-commentary about your process, searches, or 
-  year verification. Those are internal steps — the user only sees the 
-  finished analysis.
+- When producing a match analysis: your response is ONLY the analysis itself, 
+  starting directly with the "## [Player A] def. [Player B]" header.
+  No preamble, no meta-commentary, no "Let me verify..." or "Based on my 
+  searches..." Start with the header. End with the VERDICT.
+- When the requested player was NOT in the requested match: do NOT use 
+  the analysis format above. Instead, write a short, helpful message 
+  explaining the mismatch. No headers, no sections — just a clear 
+  conversational response telling the user what you found and offering 
+  alternatives.
+- When you couldn't find data: write a short, honest message explaining 
+  what went wrong and suggesting how the user could refine their query.
 - Do NOT include phrases like "YEAR VERIFICATION" or "✅ Confirmed" in 
-  your output.
-- Start the response with the match header. End it with the VERDICT. 
-  Nothing else.
+  your output under any circumstances.
+
+## LANGUAGE MATCHING (MANDATORY)
+- You will receive a RESPOND_IN_LANGUAGE directive in the user's message.
+  Follow it strictly.
+- Respond ENTIRELY in the specified language. This includes the analysis,
+  error messages, clarification requests, "I couldn't find" responses —
+  EVERYTHING.
+- Keep tennis terminology natural: player names stay in their original form 
+  (Sinner, Djokovic, Alcaraz), but the analysis, stats explanations, and 
+  section labels should be translated.
+- Section labels MUST be translated AND kept in ALL CAPS.
+  Examples for Ukrainian: ІСТОРІЯ МАТЧУ, ВИРІШАЛЬНИЙ ФАКТОР, ЯК ЦЕ ВІДБУВАЛОСЬ, 
+  ЦИФРИ, ЩО МАЮТЬ ЗНАЧЕННЯ, ВЕРДИКТ.
+  Examples for Russian: ИСТОРИЯ МАТЧА, РЕШАЮЩИЙ ФАКТОР, КАК ЭТО ПРОИЗОШЛО, 
+  КЛЮЧЕВЫЕ ЦИФРЫ, ВЕРДИКТ.
+- Default to English ONLY if the directive says "English" or is missing.
 """
 
 analysis_agent = create_agent(
@@ -194,6 +220,17 @@ Include any surface-specific H2H or tournament results.]
 - Do NOT include preamble like "Based on my searches..." or "Let me compare..."
 - Do NOT include meta-commentary about your process.
 - Start with the header. End with the VERDICT. Nothing else.
+
+## LANGUAGE MATCHING (MANDATORY)
+- You will receive a RESPOND_IN_LANGUAGE directive in the user's message.
+  Follow it strictly.
+- Respond ENTIRELY in the specified language. This includes the comparison,
+  error messages, clarification requests — EVERYTHING.
+- Keep tennis terminology natural: player names stay in their original form 
+  (Sinner, Djokovic, Alcaraz), but the analysis and section labels should 
+  be translated.
+- Section labels MUST be translated AND kept in ALL CAPS.
+- Default to English ONLY if the directive says "English" or is missing.
 """
 
 comparison_agent = create_agent(
@@ -201,6 +238,41 @@ comparison_agent = create_agent(
     tools=tools,
     system_prompt=comparison_system_prompt,
 )
+
+
+# =============================================================================
+# LANGUAGE DETECTION
+# =============================================================================
+
+def detect_language(text: str) -> str:
+    """
+    Simple language detection based on character analysis.
+    No extra API calls needed — just checks for Cyrillic, Latin, etc.
+
+    Returns a language name like "Ukrainian", "Russian", "English", "Spanish".
+    """
+    # Count character types
+    cyrillic_chars = sum(1 for c in text if '\u0400' <= c <= '\u04FF')
+    latin_chars = sum(1 for c in text if ('a' <= c.lower() <= 'z'))
+
+    # Ukrainian-specific letters: і, ї, є, ґ
+    ukrainian_markers = sum(1 for c in text.lower() if c in 'іїєґ')
+
+    # If mostly Cyrillic
+    if cyrillic_chars > latin_chars:
+        if ukrainian_markers > 0:
+            return "Ukrainian"
+        return "Russian"
+
+    # Latin-based — check for Spanish/French/German markers
+    if any(c in text.lower() for c in 'áéíóúñ¿¡'):
+        return "Spanish"
+    if any(c in text.lower() for c in 'àâçèêëîïôùûüœæ'):
+        return "French"
+    if any(c in text.lower() for c in 'äöüß'):
+        return "German"
+
+    return "English"
 
 
 # =============================================================================
@@ -224,9 +296,15 @@ def compare_players(user_input: str, verbose: bool = False) -> str:
     if parsed.get("surface"):
         query_parts.append(f"on {parsed['surface']}")
 
-    enriched = " ".join(query_parts) + f". Original question: '{user_input}'"
+    enriched = " ".join(query_parts)
+
+    # Detect language and add directive
+    language = detect_language(user_input)
+    enriched += f"\n\n🌐 RESPOND_IN_LANGUAGE: {language}"
+    enriched += f"\nOriginal question: '{user_input}'"
 
     if verbose:
+        print(f"Detected language: {language}")
         print(f"Understood: {enriched}")
         print("\nComparing... (this may take 15-30 seconds)\n")
 
@@ -281,7 +359,12 @@ def analyse_match(user_input: str, verbose: bool = False) -> str:
     if parsed.get("query_type") == "comparison":
         return compare_players(user_input, verbose=verbose)
 
-    # Step 4: Build enriched query for match analysis
+    # Step 4: Detect language from the original input
+    language = detect_language(user_input)
+    if verbose:
+        print(f"  → Detected language: {language}")
+
+    # Step 5: Build enriched query for match analysis
     parts = []
 
     if parsed.get("player1") and parsed.get("player2"):
@@ -289,9 +372,15 @@ def analyse_match(user_input: str, verbose: bool = False) -> str:
             f"Analyse this tennis match: {parsed['player1']} vs {parsed['player2']}"
         )
     elif parsed.get("player1"):
-        parts.append(
-            f"Find and analyse the tennis match involving {parsed['player1']}"
-        )
+        if parsed.get("round"):
+            # Don't include "at" here — the tournament line adds "at the ..." next
+            parts.append(
+                f"Find and analyse {parsed['player1']}'s {parsed['round']} match"
+            )
+        else:
+            parts.append(
+                f"Find and analyse the tennis match involving {parsed['player1']}"
+            )
     else:
         parts.append(f"Analyse this tennis query: {user_input}")
 
@@ -299,15 +388,36 @@ def analyse_match(user_input: str, verbose: bool = False) -> str:
         parts.append(f"at the {parsed['tournament']}")
     if parsed.get("year"):
         parts.append(f"in {parsed['year']}")
-    if parsed.get("round"):
+    if parsed.get("round") and not (parsed.get("player1") and not parsed.get("player2")):
+        # Only add round separately if we didn't already fold it into the player line
         parts.append(f"({parsed['round']})")
     if parsed.get("surface"):
         parts.append(f"[surface: {parsed['surface']}]")
 
     enriched_query = " ".join(parts)
 
-    if parsed.get("player1") and not parsed.get("player2"):
-        enriched_query += f". Original question: '{user_input}'"
+    # Player constraint — if a specific player + round, make the constraint explicit
+    if parsed.get("player1") and not parsed.get("player2") and parsed.get("round"):
+        enriched_query += (
+            f"\n\n⚠️ PLAYER CONSTRAINT: {parsed['player1']} MUST be one of the "
+            f"players in this match. If {parsed['player1']} did not play in the "
+            f"{parsed['round']}, do NOT analyse whoever did play instead. "
+            f"Instead, tell the user that {parsed['player1']} was not in the "
+            f"{parsed['round']}, mention who actually played, tell the user what "
+            f"round {parsed['player1']} reached, and ask what they'd like to see."
+        )
+
+    # Always append the original question so the agent knows the user's angle
+    enriched_query += f"\n\nOriginal question: '{user_input}'"
+
+    # Language directive — placed prominently so the agent can't miss it
+    enriched_query += f"\n\n🌐 RESPOND_IN_LANGUAGE: {language}"
+    enriched_query += (
+        f"\nYou MUST write your ENTIRE response in {language}. "
+        f"This includes the analysis, section labels, stats explanations, "
+        f"error messages, and any clarification requests. "
+        f"Section labels must be translated to {language} and kept in ALL CAPS."
+    )
 
     # --- STRICT YEAR DIRECTIVE ---
     if parsed.get("year"):
@@ -324,7 +434,7 @@ def analyse_match(user_input: str, verbose: bool = False) -> str:
         print(f"Understood: {enriched_query}")
         print("\nAnalysing... (this may take 15-30 seconds)\n")
 
-    # Step 5: Run the analysis agent with retry logic
+    # Step 6: Run the analysis agent with retry logic
     max_retries = 3
     for attempt in range(max_retries):
         try:

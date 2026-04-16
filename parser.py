@@ -41,6 +41,13 @@ Extract these fields (use null if not mentioned or not inferable):
 - "round": the round if mentioned (e.g. "Final", "Semifinal", "Quarterfinal")
 - "surface": the surface if you can infer it from the tournament
 - "query_type": one of "analysis", "comparison", "prediction", "stats"
+- "gender": "mens" if the query implies the men's tour, "womens" if it implies 
+  the women's tour, null if unclear. Use these signals:
+  - "mens": mentions of male players (Sinner, Djokovic, Alcaraz, Nadal, Federer, 
+    Zverev, Medvedev, etc.), or the words "ATP", "men", "men's"
+  - "womens": mentions of female players (Swiatek, Sabalenka, Gauff, Rybakina, 
+    Osaka, Serena, Venus, etc.), or the words "WTA", "women", "women's"
+  - null: no player names and no gender keywords (e.g. just "Roland Garros 2025 final")
 
 ## YEAR INFERENCE RULES (very important)
 
@@ -106,6 +113,32 @@ Return ONLY the JSON object. No markdown, no explanation, no code fences."""
             "year": None,
             "round": None,
             "surface": None,
+            "gender": None,
             "query_type": "analysis",
             "raw_query": user_input,
         }
+
+
+def is_ambiguous(parsed: dict) -> tuple[bool, str | None]:
+    """
+    Checks if the parsed query is ambiguous and needs clarification.
+
+    Returns a tuple:
+        (False, None)      — the query is clear, proceed normally
+        (True, "gender")   — we can't tell if it's men's or women's
+
+    This is used by bot.py to decide whether to show clarification buttons
+    before running the expensive agent.
+    """
+    # Gender ambiguity: tournament + final mentioned, but no gender signal
+    # and no player names that would imply a gender
+    if (
+        parsed.get("tournament")
+        and parsed.get("round") == "Final"
+        and not parsed.get("gender")
+        and not parsed.get("player1")
+        and not parsed.get("player2")
+    ):
+        return (True, "gender")
+
+    return (False, None)
