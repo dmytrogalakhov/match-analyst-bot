@@ -73,6 +73,20 @@ python3 -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
 ```
+### Environment Variables
+
+Create a `.env` file in the project root with your API keys:
+
+```
+ANTHROPIC_API_KEY=your-anthropic-key-here
+TAVILY_API_KEY=your-tavily-key-here
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
+```
+
+You can get these from:
+- [Anthropic Console](https://console.anthropic.com) for Claude
+- [Tavily](https://tavily.com) for web search (free tier available)
+- [Telegram BotFather](https://t.me/botfather) for your bot token
 
 ### Run
 
