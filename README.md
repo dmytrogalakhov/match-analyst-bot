@@ -63,11 +63,6 @@ producing the final analysis.
 
 ## Running Locally
 
-### Prerequisites
-
-- Python 3.11+
-- API keys: [Anthropic](https://console.anthropic.com), 
-  [Tavily](https://tavily.com), [Telegram BotFather](https://t.me/botfather)
 
 ### Setup
 
@@ -79,7 +74,6 @@ source venv/bin/activate  # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
 ```
 
-Create a `.env` file:
 ### Run
 
 ```bash
@@ -92,9 +86,7 @@ python3 bot.py
 
 ## Demo
 
-[Link to your demo video]
-
-Try the live bot: [@your_bot_name](https://t.me/your_bot_name)
+Try the live bot: (https://t.me/tennis_analyst_rafik_bot)
 
 ## Example Output
 
