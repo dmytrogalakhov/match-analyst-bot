@@ -168,9 +168,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "I'm your personal tennis analyst. Send me a match and I'll break down "
         "what happened, who played well, and why.\n\n"
         "<b>Examples:</b>\n"
-        "• Sinner vs Djokovic Australian Open 2025 final\n"
-        "• Why did Alcaraz lose to Sinner at Wimbledon?\n"
-        "• What happened in the last Roland Garros final?\n\n"
+        "• Sinner vs Alcaraz Roland Garros 2025 final\n"
+        "• Compare Sinner to Alcaraz\n"
+        "• What happened in the last Australian Open final?\n\n"
         "Type /help for more commands."
     )
     await update.message.reply_text(welcome, parse_mode=ParseMode.HTML)
