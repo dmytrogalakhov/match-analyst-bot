@@ -164,14 +164,17 @@ def split_message(text: str, max_length: int = TELEGRAM_MAX_LENGTH) -> list[str]
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for /start."""
     welcome = (
-        "🎾 <b>Welcome to the Tennis Match Analyst!</b>\n\n"
+        "🎾 <b>Welcome to TennisMind!</b>\n\n"
         "I'm your personal tennis analyst. Send me a match and I'll break down "
         "what happened, who played well, and why.\n\n"
         "<b>Examples:</b>\n"
         "• Sinner vs Alcaraz Roland Garros 2025 final\n"
         "• Compare Sinner to Alcaraz\n"
         "• What happened in the last Australian Open final?\n\n"
-        "Type /help for more commands."
+        "<b>Commands:</b>\n"
+        "/help — what I can do\n"
+        "/racket — get a racket recommendation 🆕\n\n"
+        "Type /help for more details."
     )
     await update.message.reply_text(welcome, parse_mode=ParseMode.HTML)
 
@@ -185,10 +188,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Analyse any ATP/WTA match — tell me the players, tournament, and year\n"
         "• Explain why someone won or lost\n"
         "• Break down stats, turning points, and tactics\n"
-        "• Compare two players (e.g. 'Compare Sinner vs Alcaraz on clay')\n\n"
+        "• Compare two players (e.g. 'Compare Sinner vs Alcaraz on clay')\n"
+        "• 🆕 Get a personalised racket recommendation (/racket)\n\n"
         "<b>Commands:</b>\n"
         "/start — welcome message\n"
-        "/help — this message\n\n"
+        "/help — this message\n"
+        "/racket — racket recommendation wizard\n\n"
         "<b>Tip:</b> Include the year for best results. 'Sinner vs Djokovic AO 2025' "
         "works better than just 'Sinner vs Djokovic'."
     )
@@ -347,7 +352,19 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(
         "I don't know that command. Try /help for what I can do."
     )
+# =============================================================================
+#  PLACEHOLDER/RACKET COMMAND 
+# =============================================================================
 
+async def racket_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for /racket — placeholder until the full feature is built."""
+    await update.message.reply_text(
+        "🎾 <b>Racket Recommendation Wizard</b>\n\n"
+        "This feature is coming soon! I'll ask you about your playing level, "
+        "style, and preferences, then recommend the perfect racket for your game.\n\n"
+        "Stay tuned — it's being built right now. 🚀",
+        parse_mode=ParseMode.HTML,
+    )
 
 # =============================================================================
 # MAIN
@@ -362,6 +379,7 @@ def main() -> None:
     # Register handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("racket", racket_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
