@@ -143,9 +143,10 @@ Structure:
 - Respond ENTIRELY in the specified language. This includes the analysis,
   error messages, clarification requests, "I couldn't find" responses —
   EVERYTHING.
-- Keep tennis terminology natural: player names stay in their original form 
-  (Sinner, Djokovic, Alcaraz), but the analysis, stats explanations, and 
-  section labels should be translated.
+- Keep tennis terminology natural. When responding in Ukrainian or Russian, 
+  transliterate player names to Cyrillic (e.g. "Бен Шелтон", "Флавіо Коболлі", 
+  "Яннік Сіннер", "Карлос Алькарас", "Новак Джокович"). When responding in 
+  English or other Latin-script languages, keep names in their original form.
 - Section labels MUST be translated AND kept in ALL CAPS.
   Examples for Ukrainian: ІСТОРІЯ МАТЧУ, ВИРІШАЛЬНИЙ ФАКТОР, ЯК ЦЕ ВІДБУВАЛОСЬ, 
   ЦИФРИ, ЩО МАЮТЬ ЗНАЧЕННЯ, ВЕРДИКТ.
@@ -226,9 +227,10 @@ Include any surface-specific H2H or tournament results.]
   Follow it strictly.
 - Respond ENTIRELY in the specified language. This includes the comparison,
   error messages, clarification requests — EVERYTHING.
-- Keep tennis terminology natural: player names stay in their original form 
-  (Sinner, Djokovic, Alcaraz), but the analysis and section labels should 
-  be translated.
+- Keep tennis terminology natural. When responding in Ukrainian or Russian, 
+  transliterate player names to Cyrillic (e.g. "Бен Шелтон", "Флавіо Коболлі", 
+  "Яннік Сіннер", "Карлос Алькарас", "Новак Джокович"). When responding in 
+  English or other Latin-script languages, keep names in their original form.
 - Section labels MUST be translated AND kept in ALL CAPS.
 - Default to English ONLY if the directive says "English" or is missing.
 """
@@ -247,24 +249,26 @@ comparison_agent = create_agent(
 def detect_language(text: str) -> str:
     """
     Simple language detection based on character analysis.
-    No extra API calls needed — just checks for Cyrillic, Latin, etc.
-
-    Returns a language name like "Ukrainian", "Russian", "English", "Spanish".
+    
+    Key rule: if the user writes ANY words in Cyrillic, they want
+    a Cyrillic-language response. People don't accidentally type
+    in Ukrainian/Russian — but they do mix in Latin player names
+    and tournament names like "Shelton vs Cobolli BMW Open".
     """
-    # Count character types
+    # Count Cyrillic characters (ignoring spaces, numbers, punctuation)
     cyrillic_chars = sum(1 for c in text if '\u0400' <= c <= '\u04FF')
-    latin_chars = sum(1 for c in text if ('a' <= c.lower() <= 'z'))
 
     # Ukrainian-specific letters: і, ї, є, ґ
     ukrainian_markers = sum(1 for c in text.lower() if c in 'іїєґ')
 
-    # If mostly Cyrillic
-    if cyrillic_chars > latin_chars:
+    # If ANY meaningful Cyrillic text is present, it's a Cyrillic language
+    # 3+ chars = at least one real word, not accidental
+    if cyrillic_chars >= 3:
         if ukrainian_markers > 0:
             return "Ukrainian"
         return "Russian"
 
-    # Latin-based — check for Spanish/French/German markers
+    # Latin-based — check for diacritics
     if any(c in text.lower() for c in 'áéíóúñ¿¡'):
         return "Spanish"
     if any(c in text.lower() for c in 'àâçèêëîïôùûüœæ'):
