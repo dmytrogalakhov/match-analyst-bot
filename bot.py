@@ -359,9 +359,9 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def racket_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler for /racket — placeholder until the full feature is built."""
     await update.message.reply_text(
-        "🎾 <b>Racket Recommendation Wizard</b>\n\n"
+        "🎾 <b>Racket and Strings Recommendation Wizard</b>\n\n"
         "This feature is coming soon! I'll ask you about your playing level, "
-        "style, and preferences, then recommend the perfect racket for your game.\n\n"
+        "style, and preferences, then recommend the perfect racket and strings for your game.\n\n"
         "Stay tuned — it's being built right now. 🚀",
         parse_mode=ParseMode.HTML,
     )
