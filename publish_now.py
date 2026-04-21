@@ -1,11 +1,19 @@
 # publish_now.py
+# Purpose: Quick-publish a single match analysis to your Telegram channel
+# Usage: python3 publish_now.py "Shelton vs Cobolli BMW Open 2026 final"
+#
+# Every published post includes a button linking to the interactive bot,
+# converting passive channel readers into active bot users.
+
 import os
 import sys
 import re
 import asyncio
 from dotenv import load_dotenv
-from telegram import Bot
+
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
+
 from analyst import analyse_match
 from editor import format_for_telegram
 
@@ -13,6 +21,7 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "tennis_analyst_rafik_bot")
 
 if not TELEGRAM_BOT_TOKEN:
     print("ERROR: TELEGRAM_BOT_TOKEN not found in .env")
@@ -42,17 +51,35 @@ def split_message(text, max_length=4000):
 async def publish_to_channel(formatted_text):
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     chunks = split_message(formatted_text)
-    for chunk in chunks:
+
+    # Button linking to the interactive bot — only on the LAST chunk
+    keyboard = [[
+        InlineKeyboardButton(
+            "🎾 Ask TennisMind Bot",
+            url=f"https://t.me/{TELEGRAM_BOT_USERNAME}",
+        )
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    for i, chunk in enumerate(chunks):
+        is_last = (i == len(chunks) - 1)
+
         try:
             await bot.send_message(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 text=chunk,
                 parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup if is_last else None,
             )
         except Exception as e:
             print(f"HTML failed: {e}")
             plain = re.sub(r"<[^>]+>", "", chunk)
-            await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=plain)
+            await bot.send_message(
+                chat_id=TELEGRAM_CHANNEL_ID,
+                text=plain,
+                reply_markup=reply_markup if is_last else None,
+            )
+
     print(f"\n✅ Published to {TELEGRAM_CHANNEL_ID}!")
 
 
@@ -77,6 +104,7 @@ def main():
     print("=" * 50)
     print(f"\nChannel: {TELEGRAM_CHANNEL_ID}")
     print(f"Length: {len(formatted)} characters")
+    print(f"Bot button: @{TELEGRAM_BOT_USERNAME}")
 
     confirm = input("\nPublish to your channel? (yes/no): ").strip().lower()
 
